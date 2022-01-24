@@ -10,77 +10,93 @@ let pokemonTokenInstance
 
 window.App = {
   // transfer the token to another recipeint
-  transferToken: (tokenId) => {
+  transferToken: async (tokenId) => {
     const currentPokemonCard = document.getElementById(`pokemon-${tokenId}`)
     const receiver = document.getElementById(`input-${tokenId}`).value
     if (receiver === '') {
       alert('Empty recipient')
       return
     }
-    pokemonTokenInstance.safeTransferFrom.estimateGas(
+    const gas = await pokemonTokenInstance.methods.safeTransferFrom(
       currentAccount,
       receiver,
-      tokenId,
-      { from: currentAccount },
-      (err, gas) => {
-        if (err) {
-          alert('Something wrong estimating gas')
-          return
-        }
-        web3.eth.getGasPrice((estimateGasError, gasPrice) => {
-          if (estimateGasError) {
-            alert('Something wrong getting gasPrice')
-            return
-          }
-          pokemonTokenInstance.safeTransferFrom(
-            currentAccount,
-            receiver,
-            tokenId,
-            {
-              from: currentAccount,
-              gas: gas + 1000000,
-              gasPrice,
-            },
-            (safeTransferFromError) => {
-              if (safeTransferFromError) {
-                alert('Something went wrong transfering the pokemon')
-                return
-              }
-              // remove the transfered element
-              currentPokemonCard.remove()
-            },
-          )
-        })
-      },
-    )
-  },
-  // get the amount of token owned by the current account
-  getUserTokenBalance: () => {
-    pokemonTokenInstance.balanceOf.call(currentAccount, (err, result) => {
-      if (err || result.toString(10) === '0') {
-        alert('Your account does not have any Pokemon token or something went wrong contacting the smart contract')
+      tokenId
+    ).estimateGas({ from: currentAccount })
+    
+    console.log('gas')
+    console.log(gas)
+
+    web3.eth.getGasPrice((estimateGasError, gasPrice) => {
+      if (estimateGasError) {
+        alert('Something wrong getting gasPrice')
         return
       }
-      const tokenOwnedAmountOwnedByAccount = result.toString(10)
-      App.getTokenOwnedIdsByAccount(tokenOwnedAmountOwnedByAccount)
+      pokemonTokenInstance.methods.safeTransferFrom(
+        currentAccount,
+        receiver,
+        tokenId,
+      ).send({
+          from: currentAccount,
+          gas: gas + 1000000,
+          gasPrice,
+        },
+        (safeTransferFromError) => {
+          if (safeTransferFromError) {
+            alert('Something went wrong transfering the pokemon')
+            return
+          }
+          // remove the transfered element
+          currentPokemonCard.remove()
+        },
+      )
     })
   },
+  // get the amount of token owned by the current account
+  getUserTokenBalance: async () => {
+    // console.log(pokemonTokenInstance)
+    const result = await pokemonTokenInstance.methods.balanceOf(currentAccount)
+    if (result.toString(10) === '0') {
+      alert('Your account does not have any Pokemon token or something went wrong contacting the smart contract')
+      return
+    }
+    console.log(result)
+    const tokenOwnedAmountOwnedByAccount = result.arguments
+    console.log(' result.arguments')
+    console.log( result.arguments)
+    App.getTokenOwnedIdsByAccount(tokenOwnedAmountOwnedByAccount)
+  },
   // fill an array with each token id owned by the current owner
-  getTokenOwnedIdsByAccount: (tokenOwnedAmountOwnedByAccount) => {
-    for (let x = 0; x < tokenOwnedAmountOwnedByAccount; x += 1) {
-      pokemonTokenInstance.tokenOfOwnerByIndex.call(currentAccount, x, (err, result) => {
-        if (err) {
-          alert('Something went wrong getting tokens id of your account or something went wrong contacting the smart contract')
-        } else {
-          const tokenId = result.toString(10)
-          App.getTokenURI(tokenId)
-        }
+  getTokenOwnedIdsByAccount: async (tokenOwnedAmountOwnedByAccount) => {
+    // console.log(tokenOwnedAmountOwnedByAccount)
+    // console.log(pokemonTokenInstance)
+    // console.log(pokemonTokenInstance.methods)
+    console.log(currentAccount == tokenOwnedAmountOwnedByAccount)
+    if(currentAccount != tokenOwnedAmountOwnedByAccount) {
+      return
+    }
+    try {
+      const task = []
+      for(let x = 0; x < 151; x++){
+        task.push(pokemonTokenInstance.methods.tokenOfOwnerByIndex(tokenOwnedAmountOwnedByAccount[0], x).call())
+      }
+      Promise.allSettled(task).then((result) => {
+        result && result.forEach((item) => {
+          const tokenId = item.value ? item.value.toString(10) : null
+          tokenId && App.getTokenURI(tokenId)
+        })
+      }).catch((err)=>{
+        console.error('err', err)
+        //
       })
+
+    } catch(err) {
+      console.error(err)
+      // alert('Something went wrong getting tokens id of your account or something went wrong contacting the smart contract')
     }
   },
   // get token URI
   getTokenURI: (tokenId) => {
-    pokemonTokenInstance.tokenURI.call(tokenId, (err, tokenURI) => {
+    pokemonTokenInstance.methods.tokenURI(tokenId).call((err, tokenURI) => {
       if (err) {
         alert('Something went wrong getting token URI or something went wrong contacting the smart contract')
       } else {
@@ -172,7 +188,7 @@ window.App = {
     listDiv.insertAdjacentHTML('beforeend', card)
   },
   startWatchTransfer: (account) => {
-    pokemonTokenInstance.Transfer({ _from: account }, { fromBlock: 'latest' }, (error, transferEvent) => {
+    pokemonTokenInstance.events.Transfer({ from: account, fromBlock : 'latest' }, (error, transferEvent)=>{
       if (error) alert('Error in getting the Transfer events')
       console.log('Transfer: ', transferEvent)
     })
@@ -192,6 +208,7 @@ window.App = {
         return
       }
       [currentAccount] = accs
+      // window.ethereum.enable()
       App.startWatchTransfer(currentAccount)
       App.getUserTokenBalance()
     })
@@ -210,7 +227,8 @@ window.addEventListener('load', () => {
       const pokemonTokenAbi = result.tokenArtifact.abi
       const { networkId } = result
       const pokemonTokenAddress = result.tokenArtifact.networks[networkId].address
-      pokemonTokenInstance = web3.eth.contract(pokemonTokenAbi).at(pokemonTokenAddress)
+      // const pokemonTokenAddress = '0xfED48B53F604de04403E9b64aDf1387e0aA8aE4A' // result.tokenArtifact.networks[networkId].address
+      pokemonTokenInstance = new web3.eth.Contract(pokemonTokenAbi, pokemonTokenAddress)
       App.start()
     }
   } else {
